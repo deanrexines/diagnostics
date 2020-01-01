@@ -1,20 +1,20 @@
 import os
 import cv2
 import sys
-from keras.callbacks import CSVLogger, ModelCheckpoint
+import math
+from tensorflow.keras.callbacks import CSVLogger, ModelCheckpoint, LearningRateScheduler
 import numpy as np 
 from skimage.io import imsave, imread
 from skimage.transform import rescale, resize
-from keras.models import *
-from keras.layers import *
-from keras.optimizers import *
-from keras.callbacks import *
-from keras import *
-from keras.preprocessing.image import *
+from tensorflow.keras.models import *
+from tensorflow.keras.layers import *
+from tensorflow.keras.optimizers import *
+from tensorflow.keras.callbacks import *
+from tensorflow.keras import *
+from tensorflow.keras.preprocessing.image import *
 import tensorflow as tf
-from keras.callbacks import CSVLogger
+from tensorflow.keras.callbacks import CSVLogger
 from google.cloud import storage
-
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -77,9 +77,9 @@ class UNet:
         conv9 = Conv2D(2, 3, activation='relu', padding='same', kernel_initializer = 'he_normal')(conv9)
         conv10 = Conv2D(1, 1, activation='sigmoid')(conv9)
 
-        model = Model(input = inputs, output = conv10)
+        model = Model(inputs = inputs, outputs = conv10)
 
-        model.compile(optimizer = Adam(lr = 1e-4), loss = 'binary_crossentropy', metrics = ['accuracy'])
+        model.compile(optimizer = Adam(lr=0.0), loss = 'binary_crossentropy', metrics = ['accuracy'])
 
         model.summary()
 
@@ -88,6 +88,15 @@ class UNet:
 
         self.model = model
 
+    @staticmethod
+    def step_decay(epoch):
+       initial_lrate = 0.1
+       drop = 0.5
+       epochs_drop = 10.0
+       lrate = initial_lrate * math.pow(drop,  
+               math.floor((1+epoch)/epochs_drop))
+       return lrate
+    
     def create_train_data_local(self):
         train_image_path = os.path.abspath(self.train_image_path)
         os.path.abspath(self.train_image_path)
@@ -100,6 +109,7 @@ class UNet:
 
         imgs = np.ndarray((total + 1, IMAGE_ROWS, IMAGE_COLS, 1), dtype=np.uint8)
         imgs_mask = np.ndarray((total + 1, IMAGE_ROWS, IMAGE_COLS, 1), dtype=np.uint8)
+
         i = 0
         for image_name, mask_name in zip(_images, _masks):
             if 'mask' in image_name:
@@ -118,6 +128,17 @@ class UNet:
 
         np.save('imgs_train.npy', imgs)
         np.save('imgs_mask_train.npy', imgs_mask)
+
+
+    def process_image_for_inference(self):
+        train_image_path = os.path.abspath(self.train_image_path)
+        os.path.abspath(self.train_image_path)
+
+        _images = os.listdir(train_image_path)
+
+        img = resize(imread(os.path.join(train_image_path, _images[0]), as_gray=True), (IMAGE_ROWS, IMAGE_COLS, 1))
+
+        return img
 
     def create_train_data_gcloud(self):
         storage_client = storage.Client()
@@ -151,7 +172,7 @@ class UNet:
                 imgs[i] = img
                 imgs_mask[i] = img_mask
                 i += 1
-
+                
         np.save('imgs_train.npy', imgs)
         np.save('imgs_mask_train.npy', imgs_mask)
 
@@ -167,8 +188,15 @@ class UNet:
         csv_logger = CSVLogger('log.csv', append=True, separator=';')
 
         imgs_train, imgs_mask_train = self.load_train_data()
-        self.model.fit(imgs_train, imgs_mask_train, batch_size=32, nb_epoch=1, verbose=1, shuffle=True, callbacks=[csv_logger],
+
+        lrate = LearningRateScheduler(UNet.step_decay)
+
+        self.model.fit(imgs_train, imgs_mask_train, batch_size=32, epochs=5, verbose=1, shuffle=True, callbacks=[csv_logger, lrate],
                        validation_split=0.2)
+
+        export_path = 'gs://diagnostics-unet-bucket/saved_models'
+
+        tf.keras.models.save_model(self.model, export_path, save_format='tf')
 
     def train(self):
         tf.executing_eagerly()
@@ -212,7 +240,13 @@ if __name__ == '__main__':
         train_image_path=sys.argv[1]
         train_mask_path=sys.argv[2]
 
-    unet = UNet(train_image_path=train_image_path, train_mask_path=train_mask_path)
-    unet.get_unet()
-    unet.create_train_data_gcloud()
-    unet.train_no_generator()
+    if sys.argv[3] and sys.argv[3] == 'local':
+        unet = UNet()
+        unet.get_unet()
+        unet.create_train_data_local()
+        unet.train_no_generator()
+    else:
+        unet = UNet(train_image_path=train_image_path, train_mask_path=train_mask_path)
+        unet.get_unet()
+        unet.create_train_data_gcloud()
+        unet.train_no_generator()

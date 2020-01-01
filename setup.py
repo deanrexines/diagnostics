@@ -1,7 +1,7 @@
 from setuptools import find_packages
 from setuptools import setup
 
-REQUIRED_PACKAGES = ['numpy==1.16.5', 'keras==2.3.1', 'scikit-image==0.14.5', 'tensorflow==2.0.0', 'google-cloud-storage==1.23.0']
+REQUIRED_PACKAGES = ['numpy==1.16.5', 'keras==2.3.1', 'scikit-image==0.15.0', 'tensorflow==2.0.0b1', 'google-cloud-storage==1.23.0', 'opencv-python==4.1.2.30']
 
 setup(
     name='unet',
